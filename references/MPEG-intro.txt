@@ -1,0 +1,2 @@
+Go to the following link for a good intro to MPEG
+https://vsr.informatik.tu-chemnitz.de/~jan/MPEG/HTML/mpeg_tech.html
