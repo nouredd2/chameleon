@@ -1,5 +1,7 @@
 import numpy as np
+import cv
 import cv2
+import random
 from scipy.fftpack import dct, idct
 
 BLOCK_SIZE = 8
@@ -72,7 +74,8 @@ class BaseStego:
     @staticmethod
     def convertdct(spatialrep):
         """Transforms an image to DCT"""
-        # DCT representation axes order is color plane, xcoord of block, ycoord of block, block xcoord, block ycoord
+        # DCT representation axes order is color plane, xcoord of block, ycoord of block,
+        # block xcoord, block ycoord
         dimens = (spatialrep.shape[2], spatialrep.shape[1] // BLOCK_SIZE,
                   spatialrep.shape[0] // BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE)
         # Transform each block
@@ -80,8 +83,8 @@ class BaseStego:
         for colorplane in range(spatialrep.shape[2]):
             for xcoord in range(0, spatialrep.shape[1], BLOCK_SIZE):
                 for ycoord in range(0, spatialrep.shape[0], BLOCK_SIZE):
-                    spatialblock = spatialrep[ycoord:ycoord + BLOCK_SIZE, xcoord:xcoord + BLOCK_SIZE,
-                                   colorplane]
+                    spatialblock = spatialrep[ycoord:ycoord + BLOCK_SIZE,
+                                   xcoord:xcoord + BLOCK_SIZE, colorplane]
                     dctblock = dct2d(spatialblock)
                     dctrep[colorplane, xcoord // BLOCK_SIZE, ycoord // BLOCK_SIZE] = dctblock
         return dctrep
@@ -97,7 +100,8 @@ class BaseStego:
                     dctblock = dctrep[colorplane, xcoord, ycoord]
                     spatialblock = idct2d(dctblock)
                     spatialrep[ycoord * BLOCK_SIZE:(ycoord + 1) * BLOCK_SIZE,
-                    xcoord * BLOCK_SIZE:(xcoord + 1) * BLOCK_SIZE, colorplane] = spatialblock
+                               xcoord * BLOCK_SIZE:(xcoord + 1) * BLOCK_SIZE,
+                               colorplane] = spatialblock
         return spatialrep
 
     @staticmethod
@@ -125,11 +129,15 @@ class BaseStego:
         self.dctrep = None
         self.quantized = False
 
-    def setcover(self, path):
+    def loadimage(self, path):
         """Stores a cover image in DCT format"""
         img = cv2.imread(path)
         img = BaseStego.addpadding(img)
+        # # FIXME remove
+        # self.bgrrep = img
         img = BaseStego.convertycc(img)
+        # # FIXME remove
+        # self.yccrep = img
         self.dctrep = BaseStego.convertdct(img)
 
     def save(self, path):
@@ -139,9 +147,18 @@ class BaseStego:
             return
         if self.quantized:
             self.dequantize()
+            self.quantized = False
         spatialrep = BaseStego.convertspatial(self.dctrep)
+        # # FIXME remove
+        # self.yccrep = spatialrep
         spatialrep = BaseStego.convertbgr(spatialrep)
-        cv2.imwrite(path, spatialrep)
+        # # FIXME remove
+        # self.bgrrep = spatialrep
+        # FIXME cv2 imwrite does not perfectly record values
+        cv2.imwrite(path, spatialrep, [cv.CV_IMWRITE_JPEG_QUALITY, 100])
+        # # FIXME remove
+        # spatialrep2 = cv2.imread(path)
+        # print(np.array_equal(spatialrep, spatialrep2))
 
     def quantize(self):
         """Quantizes the current DCT representation"""
@@ -162,7 +179,7 @@ class BaseStego:
         self.quantized = True
 
     def dequantize(self):
-        """Multiples by QT to approximate origianl"""
+        """Multiples by QT to approximate original"""
         if self.dctrep is None:
             print('dequantize(): Please set cover image first')
             return
@@ -178,7 +195,117 @@ class BaseStego:
                             # QT is in row-major order
                             block[u, v] *= QT[v, u]
 
-test = BaseStego()
-test.setcover('hacker.jpg')
-test.quantize()
-test.save('test.jpg')
+class Outguess(BaseStego):
+    """An implementation of the Outguess algorithm"""
+
+    @staticmethod
+    def embedlsb(integer, bit):
+        """Embeds a bit in the LSB of an integer"""
+        if bit == 0 and integer % 2 == 1:
+            integer -= 1  # Also works for negative with two's complement
+        if bit == 1 and integer % 2 == 0:
+            integer += 1  # Also works for negative with two's complement
+        return integer
+
+    def __init__(self, seed, coverpath):
+        """Loads an image and seeds RNG"""
+        BaseStego.__init__(self)
+        self.seed = seed
+        self.loadimage(coverpath)
+        self.quantize()
+
+    def _enumeratepositions(self):
+        """Lists all positions in dctrep"""
+        positions = []
+        for i1 in range(self.dctrep.shape[0]):
+            for i2 in range(self.dctrep.shape[1]):
+                for i3 in range(self.dctrep.shape[2]):
+                    for i4 in range(self.dctrep.shape[3]):
+                        for i5 in range(self.dctrep.shape[4]):
+                            positions.append((i1, i2, i3, i4, i5))
+        return positions
+
+    def embed(self, message):
+        """Use Outguess to embed a secret message of bits"""
+        positions = self._enumeratepositions()
+        random.seed(self.seed)  # Note: not cryptographically secure
+        random.shuffle(positions)
+
+        # TODO try-catch if message is too long and positions[i] goes out of bounds
+        positionindex = 0
+        for bit in message:
+            coefficient = self.dctrep[positions[positionindex]]
+            while coefficient == 0 or coefficient == 1:
+                positionindex += 1
+                coefficient = self.dctrep[positions[positionindex]]
+            newcoefficient = Outguess.embedlsb(coefficient, bit)
+            self.dctrep[positions[positionindex]] = newcoefficient
+            print coefficient, ' to ', self.dctrep[positions[positionindex]], ' at ', positionindex
+            positionindex += 1
+
+    def extract(self, msglength):
+        """Extracts a message already embedded with Outguess"""
+        positions = self._enumeratepositions()
+        random.seed(self.seed)  # Note: not cryptographically secure
+        random.shuffle(positions)
+
+        message = []
+        positionindex = 0
+        # TODO try-catch if msglength is too long and positions[i] goes out of bounds
+        for i in range(msglength):
+            coefficient = self.dctrep[positions[positionindex]]
+            while coefficient == 0 or coefficient == 1:
+                positionindex += 1
+                coefficient = self.dctrep[positions[positionindex]]
+            print coefficient, ' at ', positionindex
+            message.append(coefficient % 2)
+            positionindex += 1
+        return message
+
+# test = BaseStego()
+# test.loadimage('hacker.jpg')
+# block = test.bgrrep[120:120+8, 272:272+8, 0]
+# print(block)
+# print(idct2d(block))
+# test.quantize()
+# test.save('test.jpg')
+# block = test.bgrrep[120:120+8, 272:272+8, 0]
+# print(block)
+# print(idct2d(block))
+
+# test2 = BaseStego()
+# test2.setcover('test.jpg')
+# block = test2.bgrrep[120:120+8, 272:272+8, 0]
+# print(block)
+# print(idct2d(block))
+# test2.quantize()
+# test2.save('test3.jpg')
+# block = test2.dctrep[0, 272//8, 124//8]
+# print(block)
+# print(idct2d(block))
+
+secretmessage = []
+for i in range(1000):
+    secretmessage.append(random.choice([0, 1]))
+sharedsecret = 123456789
+
+alice = Outguess(sharedsecret, 'hacker.jpg')
+originallsbs = alice.extract(1000)
+alice.embed(secretmessage)
+alice.save('stego.jpg')
+
+bob = Outguess(sharedsecret, 'stego.jpg')
+extractedmessage = bob.extract(1000)
+
+secretmessage = np.asarray(secretmessage)
+extractedmessage = np.asarray(extractedmessage)
+print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage), ' / ', len(secretmessage)
+
+bob2 = Outguess(sharedsecret, 'stego.jpg')
+extractedmessage2 = bob2.extract(1000)
+
+extractedmessage2 = np.asarray(extractedmessage2)
+print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage2), ' / ', len(secretmessage)
+
+originallsbs = np.asarray(originallsbs)
+print 'Original: ', np.count_nonzero(originallsbs == extractedmessage), ' / ', len(originallsbs)
