@@ -133,14 +133,12 @@ class BaseStego:
         """Stores a cover image in DCT format"""
         img = cv2.imread(path)
         img = BaseStego.addpadding(img)
-        # FIXME remove
-        self.bgrrep = img
         # Note: removed Y'CbCr
         # img = BaseStego.convertycc(img)
         self.dctrep = BaseStego.convertdct(img)
 
-    def save(self, path):
-        """Saves the current image to a file"""
+    def saveimage(self, path):
+        """Saves the current image to a image file"""
         if self.dctrep is None:
             print('save(): Please set cover image first')
             return
@@ -148,14 +146,23 @@ class BaseStego:
             self.dequantize()
             self.quantized = False
         spatialrep = BaseStego.convertspatial(self.dctrep)
-        # FIXME remove
-        self.bgrrep = spatialrep
         cv2.imwrite(path, spatialrep, [cv.CV_IMWRITE_JPEG_QUALITY, 100, cv.CV_IMWRITE_PNG_COMPRESSION, 0])
+
+    def loaddct(self, path):
+        """Loads a DCT matrix from a text file"""
+        self.dctrep = np.load(path)
+
+    def savedct(self, path):
+        """Saves a DCT matrix to a text file"""
+        np.save(path, self.dctrep)
 
     def quantize(self):
         """Quantizes the current DCT representation"""
         if self.dctrep is None:
             print('quantize(): Please set cover image first')
+            return
+        if self.quantized:
+            print('quantize(): Already quantized')
             return
         quantizedrep = np.empty(self.dctrep.shape, dtype=int)
         for colorplane in range(self.dctrep.shape[0]):
@@ -187,6 +194,7 @@ class BaseStego:
                             # QT is in row-major order
                             block[u, v] *= QT[v, u]
 
+
 class Outguess(BaseStego):
     """An implementation of the Outguess algorithm"""
 
@@ -199,12 +207,17 @@ class Outguess(BaseStego):
             integer += 1  # Also works for negative with two's complement
         return integer
 
-    def __init__(self, seed, coverpath):
+    def __init__(self, seed, coverpath=None, dctpath=None):
         """Loads an image and seeds RNG"""
         BaseStego.__init__(self)
         self.seed = seed
-        self.loadimage(coverpath)
-        self.quantize()
+        if coverpath is not None:
+            self.loadimage(coverpath)
+            self.quantize()
+        elif dctpath is not None:
+            self.loaddct(dctpath)
+        else:
+            print 'coverpath or dctpath required'
 
     def _enumeratepositions(self):
         """Lists all positions in dctrep"""
@@ -232,7 +245,6 @@ class Outguess(BaseStego):
                 coefficient = self.dctrep[positions[positionindex]]
             newcoefficient = Outguess.embedlsb(coefficient, bit)
             self.dctrep[positions[positionindex]] = newcoefficient
-            print coefficient, ' to ', self.dctrep[positions[positionindex]], ' at ', positionindex
             positionindex += 1
 
     def extract(self, msglength):
@@ -249,51 +261,28 @@ class Outguess(BaseStego):
             while coefficient == 0 or coefficient == 1:
                 positionindex += 1
                 coefficient = self.dctrep[positions[positionindex]]
-            print coefficient, ' at ', positionindex
             message.append(coefficient % 2)
             positionindex += 1
         return message
 
-test = BaseStego()
-test.loadimage('hacker.jpg')
-test.quantize()
-test.save('test.png')
-block = test.bgrrep[120:120+8, 272:272+8, 0]
-print(block)
+random.seed(1234554321)
+secretmessage = []
+for i in range(1000):
+    secretmessage.append(random.choice([0, 1]))
+sharedsecret = 123456789
 
-test2 = BaseStego()
-test2.loadimage('test.png')
-block2 = test2.bgrrep[120:120+8, 272:272+8, 0]
-print(block2)
-print(block == block2)
-# test2.quantize()
-# test2.save('test3.jpg')
-# block = test2.dctrep[0, 272//8, 124//8]
-# print(block)
-# print(idct2d(block))
+alice = Outguess(sharedsecret, coverpath='hacker.jpg')
+originallsbs = alice.extract(1000)
+alice.embed(secretmessage)
+alice.savedct('stego.npy')
+alice.saveimage('stego.png')
 
-# secretmessage = []
-# for i in range(1000):
-#     secretmessage.append(random.choice([0, 1]))
-# sharedsecret = 123456789
-#
-# alice = Outguess(sharedsecret, 'hacker.jpg')
-# originallsbs = alice.extract(1000)
-# alice.embed(secretmessage)
-# alice.save('stego.png')
-#
-# bob = Outguess(sharedsecret, 'stego.png')
-# extractedmessage = bob.extract(1000)
-#
-# secretmessage = np.asarray(secretmessage)
-# extractedmessage = np.asarray(extractedmessage)
-# print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage), ' / ', len(secretmessage)
-#
-# bob2 = Outguess(sharedsecret, 'stego.png')
-# extractedmessage2 = bob2.extract(1000)
-#
-# extractedmessage2 = np.asarray(extractedmessage2)
-# print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage2), ' / ', len(secretmessage)
-#
-# originallsbs = np.asarray(originallsbs)
-# print 'Original: ', np.count_nonzero(originallsbs == extractedmessage), ' / ', len(originallsbs)
+bob = Outguess(sharedsecret, dctpath='stego.npy')
+extractedmessage = bob.extract(1000)
+
+secretmessage = np.asarray(secretmessage)
+extractedmessage = np.asarray(extractedmessage)
+print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage), ' / ', len(secretmessage)
+
+originallsbs = np.asarray(originallsbs)
+print 'Original: ', np.count_nonzero(originallsbs == extractedmessage), ' / ', len(originallsbs)
