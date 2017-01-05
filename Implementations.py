@@ -29,22 +29,22 @@ def idct2d(m0):
     return idct(idct(m, norm='ortho').T, norm='ortho').T
 
 
-def ycbcr(rgb):
-    """Formula to convert from RGB to Y'CbCr"""
-    red, green, blue = rgb
-    y = int(min(max(0, round(0.299*red + 0.587*green + 0.114*blue)), 255))
-    cb = int(min(max(0, round((-0.299*red - 0.587*green + 0.886*blue)/1.772 + 128)), 255))
-    cr = int(min(max(0, round((0.701*red - 0.587*green - 0.114*blue)/1.402 + 128)), 255))
-    return y, cb, cr
-
-
-def rgb(ycc):
-    """Formula to convert from Y'CbCr to RGB"""
-    y, cb, cr = ycc
-    red = int(min(max(0, round(y + 1.402*(cr-128))), 255))
-    green = int(min(max(0, round(y-(0.114*1.772*(cb-128)+0.299*1.402*(cr-128))/0.587)), 255))
-    blue = int(min(max(0, round(y+1.772*(cb-128))), 255))
-    return red, green, blue
+# def ycbcr(rgb):
+#     """Formula to convert from RGB to Y'CbCr"""
+#     red, green, blue = rgb
+#     y = int(min(max(0, round(0.299*red + 0.587*green + 0.114*blue)), 255))
+#     cb = int(min(max(0, round((-0.299*red - 0.587*green + 0.886*blue)/1.772 + 128)), 255))
+#     cr = int(min(max(0, round((0.701*red - 0.587*green - 0.114*blue)/1.402 + 128)), 255))
+#     return y, cb, cr
+#
+#
+# def rgb(ycc):
+#     """Formula to convert from Y'CbCr to RGB"""
+#     y, cb, cr = ycc
+#     red = int(min(max(0, round(y + 1.402*(cr-128))), 255))
+#     green = int(min(max(0, round(y-(0.114*1.772*(cb-128)+0.299*1.402*(cr-128))/0.587)), 255))
+#     blue = int(min(max(0, round(y+1.772*(cb-128))), 255))
+#     return red, green, blue
 
 
 class BaseStego:
@@ -104,25 +104,25 @@ class BaseStego:
                                colorplane] = spatialblock
         return spatialrep
 
-    @staticmethod
-    def convertycc(bgrrep):
-        """Converts RGB (BGR order) to Y'CbCr"""
-        yccrep = np.empty(bgrrep.shape, dtype=np.uint8)
-        for y in range(bgrrep.shape[0]):
-            for x in range(bgrrep.shape[1]):
-                blue, green, red = bgrrep[y, x]
-                yccrep[y, x, 0], yccrep[y, x, 1], yccrep[y, x, 2] = ycbcr((red, green, blue))
-        return yccrep
-
-    @staticmethod
-    def convertbgr(yccrep):
-        """Converts Y'CbCr to RGB (BGR order)"""
-        bgrrep = np.empty(yccrep.shape, dtype=np.uint8)
-        for y in range(yccrep.shape[0]):
-            for x in range(yccrep.shape[1]):
-                yprime, cb, cr = yccrep[y, x]
-                bgrrep[y, x, 2], bgrrep[y, x, 1], bgrrep[y, x, 0] = rgb((yprime, cb, cr))
-        return bgrrep
+    # @staticmethod
+    # def convertycc(bgrrep):
+    #     """Converts RGB (BGR order) to Y'CbCr"""
+    #     yccrep = np.empty(bgrrep.shape, dtype=np.uint8)
+    #     for y in range(bgrrep.shape[0]):
+    #         for x in range(bgrrep.shape[1]):
+    #             blue, green, red = bgrrep[y, x]
+    #             yccrep[y, x, 0], yccrep[y, x, 1], yccrep[y, x, 2] = ycbcr((red, green, blue))
+    #     return yccrep
+    #
+    # @staticmethod
+    # def convertbgr(yccrep):
+    #     """Converts Y'CbCr to RGB (BGR order)"""
+    #     bgrrep = np.empty(yccrep.shape, dtype=np.uint8)
+    #     for y in range(yccrep.shape[0]):
+    #         for x in range(yccrep.shape[1]):
+    #             yprime, cb, cr = yccrep[y, x]
+    #             bgrrep[y, x, 2], bgrrep[y, x, 1], bgrrep[y, x, 0] = rgb((yprime, cb, cr))
+    #     return bgrrep
 
     def __init__(self):
         """Initializes instance variables"""
@@ -133,11 +133,10 @@ class BaseStego:
         """Stores a cover image in DCT format"""
         img = cv2.imread(path)
         img = BaseStego.addpadding(img)
-        # # FIXME remove
-        # self.bgrrep = img
-        img = BaseStego.convertycc(img)
-        # # FIXME remove
-        # self.yccrep = img
+        # FIXME remove
+        self.bgrrep = img
+        # Note: removed Y'CbCr
+        # img = BaseStego.convertycc(img)
         self.dctrep = BaseStego.convertdct(img)
 
     def save(self, path):
@@ -149,16 +148,9 @@ class BaseStego:
             self.dequantize()
             self.quantized = False
         spatialrep = BaseStego.convertspatial(self.dctrep)
-        # # FIXME remove
-        # self.yccrep = spatialrep
-        spatialrep = BaseStego.convertbgr(spatialrep)
-        # # FIXME remove
-        # self.bgrrep = spatialrep
-        # FIXME cv2 imwrite does not perfectly record values
-        cv2.imwrite(path, spatialrep, [cv.CV_IMWRITE_JPEG_QUALITY, 100])
-        # # FIXME remove
-        # spatialrep2 = cv2.imread(path)
-        # print(np.array_equal(spatialrep, spatialrep2))
+        # FIXME remove
+        self.bgrrep = spatialrep
+        cv2.imwrite(path, spatialrep, [cv.CV_IMWRITE_JPEG_QUALITY, 100, cv.CV_IMWRITE_PNG_COMPRESSION, 0])
 
     def quantize(self):
         """Quantizes the current DCT representation"""
@@ -262,50 +254,46 @@ class Outguess(BaseStego):
             positionindex += 1
         return message
 
-# test = BaseStego()
-# test.loadimage('hacker.jpg')
-# block = test.bgrrep[120:120+8, 272:272+8, 0]
-# print(block)
-# print(idct2d(block))
-# test.quantize()
-# test.save('test.jpg')
-# block = test.bgrrep[120:120+8, 272:272+8, 0]
-# print(block)
-# print(idct2d(block))
+test = BaseStego()
+test.loadimage('hacker.jpg')
+test.quantize()
+test.save('test.png')
+block = test.bgrrep[120:120+8, 272:272+8, 0]
+print(block)
 
-# test2 = BaseStego()
-# test2.setcover('test.jpg')
-# block = test2.bgrrep[120:120+8, 272:272+8, 0]
-# print(block)
-# print(idct2d(block))
+test2 = BaseStego()
+test2.loadimage('test.png')
+block2 = test2.bgrrep[120:120+8, 272:272+8, 0]
+print(block2)
+print(block == block2)
 # test2.quantize()
 # test2.save('test3.jpg')
 # block = test2.dctrep[0, 272//8, 124//8]
 # print(block)
 # print(idct2d(block))
 
-secretmessage = []
-for i in range(1000):
-    secretmessage.append(random.choice([0, 1]))
-sharedsecret = 123456789
-
-alice = Outguess(sharedsecret, 'hacker.jpg')
-originallsbs = alice.extract(1000)
-alice.embed(secretmessage)
-alice.save('stego.jpg')
-
-bob = Outguess(sharedsecret, 'stego.jpg')
-extractedmessage = bob.extract(1000)
-
-secretmessage = np.asarray(secretmessage)
-extractedmessage = np.asarray(extractedmessage)
-print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage), ' / ', len(secretmessage)
-
-bob2 = Outguess(sharedsecret, 'stego.jpg')
-extractedmessage2 = bob2.extract(1000)
-
-extractedmessage2 = np.asarray(extractedmessage2)
-print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage2), ' / ', len(secretmessage)
-
-originallsbs = np.asarray(originallsbs)
-print 'Original: ', np.count_nonzero(originallsbs == extractedmessage), ' / ', len(originallsbs)
+# secretmessage = []
+# for i in range(1000):
+#     secretmessage.append(random.choice([0, 1]))
+# sharedsecret = 123456789
+#
+# alice = Outguess(sharedsecret, 'hacker.jpg')
+# originallsbs = alice.extract(1000)
+# alice.embed(secretmessage)
+# alice.save('stego.png')
+#
+# bob = Outguess(sharedsecret, 'stego.png')
+# extractedmessage = bob.extract(1000)
+#
+# secretmessage = np.asarray(secretmessage)
+# extractedmessage = np.asarray(extractedmessage)
+# print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage), ' / ', len(secretmessage)
+#
+# bob2 = Outguess(sharedsecret, 'stego.png')
+# extractedmessage2 = bob2.extract(1000)
+#
+# extractedmessage2 = np.asarray(extractedmessage2)
+# print 'Correct: ', np.count_nonzero(secretmessage == extractedmessage2), ' / ', len(secretmessage)
+#
+# originallsbs = np.asarray(originallsbs)
+# print 'Original: ', np.count_nonzero(originallsbs == extractedmessage), ' / ', len(originallsbs)
